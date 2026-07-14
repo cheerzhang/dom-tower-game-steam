@@ -25,7 +25,19 @@ var ai_turn_in_progress := false
 
 
 func _ready() -> void:
+	setup_chinese_font()
 	show_home()
+
+
+func setup_chinese_font() -> void:
+	var chinese_font := FontFile.new()
+	var load_error := chinese_font.load_dynamic_font("res://assets/fonts/NotoSansCJKsc-Regular.otf")
+	if load_error != OK:
+		push_error("无法加载中文字体：%s" % error_string(load_error))
+		return
+	var interface_theme := Theme.new()
+	interface_theme.default_font = chinese_font
+	theme = interface_theme
 
 
 func clear_screen() -> void:
