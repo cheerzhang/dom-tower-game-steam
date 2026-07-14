@@ -19,6 +19,9 @@ var draw_button: Button
 var event_overlay: ColorRect
 var event_title: Label
 var event_body: Label
+var game_mode := "single"
+var player_character := 0
+var ai_turn_in_progress := false
 
 
 func _ready() -> void:
@@ -52,7 +55,7 @@ func make_button(text: String, min_size := Vector2(220, 54)) -> Button:
 	var button := Button.new()
 	button.text = text
 	button.custom_minimum_size = min_size
-	button.add_theme_font_size_override("font_size", 18)
+	button.add_theme_font_size_override("font_size", 24)
 	return button
 
 
@@ -66,25 +69,92 @@ func show_home() -> void:
 	center.alignment = BoxContainer.ALIGNMENT_CENTER
 	center.add_theme_constant_override("separation", 22)
 	add_child(center)
-	var eyebrow := make_label("A TIME-BENDING COOPERATIVE GAME", 14, Color("#f4b860"))
+	var eyebrow := make_label("A TIME-BENDING COOPERATIVE GAME", 20, Color("#f4b860"))
 	eyebrow.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center.add_child(eyebrow)
 	var title := make_label("DOM TOWER", 64, Color("#f6f0df"))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center.add_child(title)
 	center.add_child(HSeparator.new())
-	var goal := make_label("让跨越时空的钟声再次响起", 24, Color("#b9c7db"))
+	var goal := make_label("让跨越时空的钟声再次响起", 28, Color("#b9c7db"))
 	goal.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center.add_child(goal)
-	var single_button := make_button("开始单人模式")
-	single_button.pressed.connect(start_single_player)
-	center.add_child(single_button)
-	var hint := make_label("单人模式将轮流操作现代人与过去人", 14, Color("#8190a8"))
+	var start_button := make_button("开始游戏")
+	start_button.pressed.connect(show_mode_select)
+	center.add_child(start_button)
+	var hint := make_label("选择游玩模式，修复跨越时空的钟塔", 21, Color("#8190a8"))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center.add_child(hint)
 
 
-func start_single_player() -> void:
+func make_centered_menu(title_text: String, detail_text: String) -> VBoxContainer:
+	clear_screen()
+	make_background()
+	var center := VBoxContainer.new()
+	center.set_anchors_preset(Control.PRESET_CENTER)
+	center.position = Vector2(-340, -260)
+	center.size = Vector2(680, 520)
+	center.alignment = BoxContainer.ALIGNMENT_CENTER
+	center.add_theme_constant_override("separation", 24)
+	add_child(center)
+	var title := make_label(title_text, 44, Color("#f6f0df"))
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	center.add_child(title)
+	var detail := make_label(detail_text, 22, Color("#b9c7db"))
+	detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	center.add_child(detail)
+	return center
+
+
+func show_mode_select(selected_mode: String = "single") -> void:
+	var center := make_centered_menu("选择游戏模式", "单人模式：一人轮流操作现代人与过去人\n角色模式：选择一名角色，另一名角色由 AI 操作")
+	var single_text := "✓ 单人模式 · 操作两名角色" if selected_mode == "single" else "单人模式 · 操作两名角色"
+	var single_button := make_button(single_text, Vector2(420, 64))
+	single_button.pressed.connect(show_mode_select.bind("single"))
+	center.add_child(single_button)
+	var character_text := "✓ 角色模式 · 与 AI 合作" if selected_mode == "character" else "角色模式 · 与 AI 合作"
+	var character_button := make_button(character_text, Vector2(420, 64))
+	character_button.pressed.connect(show_mode_select.bind("character"))
+	center.add_child(character_button)
+	var continue_text := "下一步：选择角色" if selected_mode == "character" else "开始游戏"
+	var continue_button := make_button(continue_text, Vector2(360, 64))
+	continue_button.pressed.connect(proceed_from_mode.bind(selected_mode))
+	center.add_child(continue_button)
+	var back_button := make_button("返回首页", Vector2(260, 56))
+	back_button.pressed.connect(show_home)
+	center.add_child(back_button)
+
+
+func proceed_from_mode(selected_mode: String) -> void:
+	if selected_mode == "character":
+		show_role_select()
+	else:
+		start_game("single", 0)
+
+
+func show_role_select(selected_character: int = 0) -> void:
+	var center := make_centered_menu("选择你的角色", "你操作选中的角色，另一名角色会由 AI 自动行动")
+	var modern_text := "✓ 现代人" if selected_character == 0 else "现代人"
+	var modern_button := make_button(modern_text, Vector2(360, 64))
+	modern_button.pressed.connect(show_role_select.bind(0))
+	center.add_child(modern_button)
+	var past_text := "✓ 过去人" if selected_character == 1 else "过去人"
+	var past_button := make_button(past_text, Vector2(360, 64))
+	past_button.pressed.connect(show_role_select.bind(1))
+	center.add_child(past_button)
+	var start_button := make_button("开始游戏", Vector2(360, 64))
+	start_button.pressed.connect(start_game.bind("character", selected_character))
+	center.add_child(start_button)
+	var back_button := make_button("返回模式选择", Vector2(280, 56))
+	back_button.pressed.connect(show_mode_select)
+	center.add_child(back_button)
+
+
+func start_game(mode: String = "single", selected_character: int = 0) -> void:
+	game_mode = mode
+	player_character = selected_character
+	ai_turn_in_progress = false
 	active_character = 0
 	time_indices = [0, 0]
 	occupied_locations = ["", ""]
@@ -112,7 +182,7 @@ func build_game_screen() -> void:
 	margin.add_child(page)
 	var header := HBoxContainer.new()
 	page.add_child(header)
-	var brand := make_label("DOM TOWER", 28, Color("#f6f0df"))
+	var brand := make_label("DOM TOWER", 34, Color("#f6f0df"))
 	brand.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(brand)
 	var exit_button := make_button("退出游戏", Vector2(130, 42))
@@ -130,8 +200,8 @@ func build_game_screen() -> void:
 		var box := VBoxContainer.new()
 		box.add_theme_constant_override("separation", 6)
 		panel.add_child(box)
-		box.add_child(make_label(CHARACTER_NAMES[index], 22, CHARACTER_COLORS[index]))
-		box.add_child(make_label("此刻的守望者" if index == 0 else "穿越时间的来客", 14, Color("#93a4bd")))
+		box.add_child(make_label(CHARACTER_NAMES[index], 26, CHARACTER_COLORS[index]))
+		box.add_child(make_label("此刻的守望者" if index == 0 else "穿越时间的来客", 20, Color("#93a4bd")))
 		var timeline := HBoxContainer.new()
 		timeline.add_theme_constant_override("separation", 8)
 		box.add_child(timeline)
@@ -139,9 +209,9 @@ func build_game_screen() -> void:
 	var turn_box := VBoxContainer.new()
 	turn_box.add_theme_constant_override("separation", 4)
 	page.add_child(turn_box)
-	turn_label = make_label("", 32, Color("#f6f0df"))
+	turn_label = make_label("", 38, Color("#f6f0df"))
 	turn_box.add_child(turn_label)
-	instruction_label = make_label("", 16, Color("#b9c7db"))
+	instruction_label = make_label("", 22, Color("#b9c7db"))
 	turn_box.add_child(instruction_label)
 	var grid := GridContainer.new()
 	grid.columns = 3
@@ -179,7 +249,7 @@ func build_event_overlay() -> void:
 	event_title = make_label("", 30, Color("#f4b860"))
 	event_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	card.add_child(event_title)
-	event_body = make_label("", 20, Color("#d8e1ee"))
+	event_body = make_label("", 24, Color("#d8e1ee"))
 	event_body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	event_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	card.add_child(event_body)
@@ -189,6 +259,8 @@ func build_event_overlay() -> void:
 
 
 func select_location(location: String) -> void:
+	if is_ai_turn():
+		return
 	selected_location = location
 	occupied_locations[active_character] = location
 	draw_button.disabled = false
@@ -198,6 +270,12 @@ func select_location(location: String) -> void:
 
 
 func draw_event_card() -> void:
+	if is_ai_turn():
+		return
+	show_event_card()
+
+
+func show_event_card() -> void:
 	var card_number: int = event_deck.pop_front() if not event_deck.is_empty() else 0
 	event_title.text = "事件卡 %02d" % card_number
 	event_body.text = "事件内容暂时留空\n\n%s 在「%s」发现了一段尚未书写的故事。" % [CHARACTER_NAMES[active_character], selected_location]
@@ -219,11 +297,39 @@ func finish_turn() -> void:
 
 func update_turn_ui() -> void:
 	turn_label.text = "%s · %s" % [CHARACTER_NAMES[active_character], TIMES[time_indices[active_character]]]
-	instruction_label.text = "选择一个地点。对方当前占据的地点无法进入。"
+	instruction_label.text = "AI 正在行动……" if is_ai_turn() else "选择一个地点。对方当前占据的地点无法进入。"
 	draw_button.disabled = true
 	draw_button.text = "请先选择地点"
 	refresh_timelines()
 	refresh_locations()
+	if is_ai_turn() and not ai_turn_in_progress:
+		run_ai_turn.call_deferred()
+
+
+func is_ai_turn() -> bool:
+	return game_mode == "character" and active_character != player_character
+
+
+func run_ai_turn() -> void:
+	if not is_ai_turn() or ai_turn_in_progress:
+		return
+	ai_turn_in_progress = true
+	await get_tree().create_timer(0.8).timeout
+	if not is_ai_turn():
+		ai_turn_in_progress = false
+		return
+	var available_locations := LOCATIONS.filter(func(location: String) -> bool:
+		return location != occupied_locations[1 - active_character]
+	)
+	selected_location = available_locations.pick_random()
+	occupied_locations[active_character] = selected_location
+	refresh_locations()
+	instruction_label.text = "AI 选择了「%s」，正在处理事件……" % selected_location
+	await get_tree().create_timer(0.8).timeout
+	var card_number: int = event_deck.pop_front() if not event_deck.is_empty() else 0
+	await get_tree().create_timer(0.8).timeout
+	ai_turn_in_progress = false
+	finish_turn()
 
 
 func refresh_timelines() -> void:
@@ -231,7 +337,7 @@ func refresh_timelines() -> void:
 		for child in timeline_rows[character_index].get_children():
 			child.queue_free()
 		for time_index in range(TIMES.size()):
-			var label := make_label(TIMES[time_index], 13)
+			var label := make_label(TIMES[time_index], 20)
 			if time_index < time_indices[character_index]:
 				label.add_theme_color_override("font_color", Color("#52627a"))
 			elif time_index == time_indices[character_index]:
@@ -273,7 +379,7 @@ func show_timeline_complete() -> void:
 	detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center.add_child(detail)
 	var again_button := make_button("再试一次")
-	again_button.pressed.connect(start_single_player)
+	again_button.pressed.connect(start_game.bind(game_mode, player_character))
 	center.add_child(again_button)
 	var home_button := make_button("返回首页")
 	home_button.pressed.connect(show_home)
