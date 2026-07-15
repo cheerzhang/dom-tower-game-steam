@@ -20,6 +20,13 @@ const MODERN_EVENT_CARDS: Array[Dictionary] = [
 		"title": "访客",
 		"description": "一位神秘访客来到你面前。他似乎在寻找档案中的某个名字。",
 		"effect_text": "若持有至少 2 份「文件」，失去「文件」×1；否则获得「钥匙」×1。"
+	},
+	{
+		"id": "modern_02",
+		"card_number": "M-002",
+		"title": "系统测试",
+		"description": "钟塔控制系统进入测试模式，一段模拟钟声等待确认。",
+		"effect_text": "若持有「铃铛」，可以选择触发一次响铃；触发前，现代时间先前进一格。"
 	}
 ]
 const PAST_EVENT_CARDS: Array[Dictionary] = [
@@ -29,6 +36,13 @@ const PAST_EVENT_CARDS: Array[Dictionary] = [
 		"title": "钟尚未存在",
 		"description": "你在尚未建成钟塔的年代，发现了一块带有奇异回声的材料。",
 		"effect_text": "获得「石头」×1；若位于钟塔，改为获得「铃铛」×1。"
+	},
+	{
+		"id": "past_02",
+		"card_number": "P-002",
+		"title": "工匠的第一块石料",
+		"description": "老工匠仔细检查堆放在墙边的石料，只留下最适合钟塔的一块。",
+		"effect_text": "若持有至少 2 个「石头」，失去「石头」×1；否则获得「石头」×1。"
 	}
 ]
 
@@ -56,6 +70,8 @@ var current_event_result := ""
 var event_drawn_this_turn := false
 var event_effect_resolved := false
 var settlement_in_progress := false
+var event_choice_pending := false
+var mandatory_action_pending := false
 var location_overlay: ColorRect
 var location_title: Label
 var location_body: Label
@@ -348,6 +364,8 @@ func start_game(mode: String = "single", selected_character: int = 0) -> void:
 	event_drawn_this_turn = false
 	event_effect_resolved = false
 	settlement_in_progress = false
+	event_choice_pending = false
+	mandatory_action_pending = false
 	person_timelines = [0, 1]
 	travel_cooldowns = [0, 0]
 	empty_turn_in_progress = false
@@ -958,13 +976,72 @@ func resolve_event_card(card: Dictionary, timeline_index: int) -> String:
 			if event_item_effects_enabled:
 				return "事件结算：文件不足 2 份，现代时间线获得了「钥匙」×1。"
 			return "事件结算：物品效果被档案馆屏蔽，没有获得钥匙。"
+		"modern_02":
+			if not inventories[0].has("铃铛"):
+				return "事件结算：现代时间线没有铃铛，无法进行响铃测试。"
+			if is_ai_turn():
+				advance_time(0, 1, "系统测试")
+				var ai_success := check_ringing_success("事件卡《系统测试》")
+				return "事件结算：AI 触发了系统测试响铃%s。" % ("并成功连接时间线" if ai_success else "，但胜利条件不足")
+			event_choice_pending = true
+			show_system_test_choice()
+			return "等待选择是否触发系统测试响铃。"
 		"past_01":
 			var gained_item := "铃铛" if selected_location == "钟塔" else "石头"
 			gain_event_item(timeline_index, gained_item)
 			if event_item_effects_enabled:
 				return "事件结算：%s时间线获得了「%s」×1。" % ["过去" if timeline_index == 1 else "现在", gained_item]
 			return "事件结算：物品效果被档案馆屏蔽，没有获得物品。"
+		"past_02":
+			if inventories[timeline_index].count("石头") >= 2:
+				var lost_amount := lose_event_item(timeline_index, "石头")
+				if lost_amount > 0:
+					return "事件结算：过去时间线失去了「石头」×1。"
+				return "事件结算：物品效果无效，没有失去石头。"
+			gain_event_item(timeline_index, "石头")
+			if event_item_effects_enabled:
+				return "事件结算：石头不足 2 个，过去时间线获得了「石头」×1。"
+			return "事件结算：物品效果无效，没有获得石头。"
 	return "事件效果已结算。"
+
+
+func show_system_test_choice() -> void:
+	for child in item_choice_list.get_children():
+		child.queue_free()
+	var title := make_label("启动系统测试？", 31, Color("#a879d8"))
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	item_choice_list.add_child(title)
+	var detail := make_label("触发前，现代时间会先前进一格；随后立即检查全部响铃胜利条件。", 19, Color("#d8e1ee"))
+	detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	item_choice_list.add_child(detail)
+	var trigger_button := make_button("时间 +1，并触发响铃", Vector2(380, 58))
+	apply_button_style(trigger_button, Color("#a879d8"), true)
+	trigger_button.pressed.connect(trigger_system_test_bell)
+	item_choice_list.add_child(trigger_button)
+	var skip_button := make_button("不触发", Vector2(280, 54))
+	skip_button.pressed.connect(skip_system_test_bell)
+	item_choice_list.add_child(skip_button)
+	item_choice_overlay.visible = true
+
+
+func trigger_system_test_bell() -> void:
+	if not event_choice_pending:
+		return
+	event_choice_pending = false
+	item_choice_overlay.visible = false
+	advance_time(0, 1, "系统测试")
+	var success := check_ringing_success("事件卡《系统测试》")
+	current_event_result = "事件结算：现代时间前进一格，并触发了响铃%s。" % ("，成功连接时间线" if success else "，但胜利条件不足")
+
+
+func skip_system_test_bell() -> void:
+	if not event_choice_pending:
+		return
+	event_choice_pending = false
+	item_choice_overlay.visible = false
+	current_event_result = "事件结算：你选择不触发系统测试响铃。"
+	instruction_label.text = "你选择不触发《系统测试》的响铃，事件结算继续。"
 
 
 func complete_event_review() -> void:
@@ -981,6 +1058,12 @@ func complete_event_review() -> void:
 	await get_tree().create_timer(0.45).timeout
 	if not current_event_card.is_empty():
 		current_event_result = resolve_event_card(current_event_card, active_character)
+	while event_choice_pending:
+		await get_tree().create_timer(0.15).timeout
+	while item_choice_overlay.visible and not game_over:
+		await get_tree().create_timer(0.15).timeout
+	if game_over:
+		return
 	event_effect_resolved = true
 	event_resolved = true
 	await get_tree().create_timer(1.35).timeout
@@ -990,7 +1073,7 @@ func complete_event_review() -> void:
 	settlement_in_progress = false
 	review_event_button.disabled = false
 	draw_button.text = "事件卡已处理"
-	if not item_choice_overlay.visible:
+	if not mandatory_action_pending and not item_choice_overlay.visible:
 		end_turn_button.disabled = false
 		instruction_label.text = "本轮结算完成。你可以再次查看事件卡、使用地点技能，或结束回合。"
 	refresh_turn_actions()
@@ -1195,6 +1278,7 @@ func activate_museum_skill() -> void:
 				lose_item(0, item_to_lose)
 				instruction_label.text = "博物馆效果：AI 获得文件后失去了「%s」×1。" % item_to_lose
 			else:
+				mandatory_action_pending = true
 				end_turn_button.disabled = true
 				instruction_label.text = "博物馆效果：获得了「文件」×1。现在必须选择失去一件物品。"
 				show_museum_discard_choices()
@@ -1240,6 +1324,7 @@ func discard_item_for_museum(item: String) -> void:
 	if not inventories[0].has(item):
 		return
 	lose_item(0, item)
+	mandatory_action_pending = false
 	item_choice_overlay.visible = false
 	end_turn_button.disabled = settlement_in_progress
 	instruction_label.text = "博物馆效果结算完成：现代人失去了「%s」×1。" % item
@@ -1519,6 +1604,16 @@ func refresh_inventory_labels() -> void:
 
 
 func finish_turn() -> void:
+	if mandatory_action_pending:
+		end_turn_button.disabled = true
+		instruction_label.text = "还有必须完成的行动：请先选择并失去一件物品。"
+		show_effect_feedback("必须先完成物品丢弃，不能结束回合", Color("#ef6f6c"), "强制行动")
+		show_museum_discard_choices()
+		return
+	if settlement_in_progress or event_choice_pending:
+		end_turn_button.disabled = true
+		show_effect_feedback("当前结算尚未完成", Color("#ef6f6c"), "请稍候")
+		return
 	event_overlay.visible = false
 	for person_index in get_people_on_timeline(active_character):
 		if travel_cooldowns[person_index] > 0:
@@ -1539,6 +1634,8 @@ func finish_turn() -> void:
 	event_drawn_this_turn = false
 	event_effect_resolved = false
 	settlement_in_progress = false
+	event_choice_pending = false
+	mandatory_action_pending = false
 	if time_indices[0] >= TIMES.size() and time_indices[1] >= TIMES.size():
 		show_timeline_complete()
 		return
@@ -1614,6 +1711,10 @@ func run_ai_turn() -> void:
 	var event_card := take_next_event_card(active_character)
 	if not event_card.is_empty():
 		resolve_event_card(event_card, active_character)
+		if game_over:
+			return
+		while item_choice_overlay.visible:
+			await get_tree().create_timer(0.2).timeout
 	await get_tree().create_timer(0.8).timeout
 	if selected_location == "钟塔":
 		if active_character == 1 and inventories[1].count("石头") >= 1 and inventories[1].count("文件") >= 1:
