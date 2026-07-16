@@ -27,6 +27,13 @@ const MODERN_EVENT_CARDS: Array[Dictionary] = [
 		"title": "系统测试",
 		"description": "钟塔控制系统进入测试模式，一段模拟钟声等待确认。",
 		"effect_text": "若持有「铃铛」，可以选择触发一次响铃；触发前，现代时间先前进一格。"
+	},
+	{
+		"id": "modern_03",
+		"card_number": "M-003",
+		"title": "误以为已经完成",
+		"description": "两条时间线的物资清单看起来几乎一致，但最后一次核对仍未完成。",
+		"effect_text": "结算时比较两条时间线的全部物品与数量：若不同，现代组必须丢弃物品 ×1；若相同，现代组获得「文件」×1。可在地点效果前或后结算。"
 	}
 ]
 const PAST_EVENT_CARDS: Array[Dictionary] = [
@@ -43,6 +50,13 @@ const PAST_EVENT_CARDS: Array[Dictionary] = [
 		"title": "工匠的第一块石料",
 		"description": "老工匠仔细检查堆放在墙边的石料，只留下最适合钟塔的一块。",
 		"effect_text": "若持有至少 2 个「石头」，失去「石头」×1；否则获得「石头」×1。"
+	},
+	{
+		"id": "past_03",
+		"card_number": "P-003",
+		"title": "误差",
+		"description": "一块多余的石料填补了眼前的误差，却让下一次时间穿越变得极不稳定。",
+		"effect_text": "获得「石头」×1。下一次任何角色真正穿越时都不能携带物品；穿越完成后此限制解除。"
 	}
 ]
 
@@ -72,6 +86,9 @@ var event_effect_resolved := false
 var settlement_in_progress := false
 var event_choice_pending := false
 var mandatory_action_pending := false
+var mandatory_action_source := ""
+var deferred_event_pending := false
+var travel_carry_blocked_once := false
 var location_overlay: ColorRect
 var location_title: Label
 var location_body: Label
@@ -366,6 +383,9 @@ func start_game(mode: String = "single", selected_character: int = 0) -> void:
 	settlement_in_progress = false
 	event_choice_pending = false
 	mandatory_action_pending = false
+	mandatory_action_source = ""
+	deferred_event_pending = false
+	travel_carry_blocked_once = false
 	person_timelines = [0, 1]
 	travel_cooldowns = [0, 0]
 	empty_turn_in_progress = false
@@ -488,7 +508,7 @@ func build_game_screen() -> void:
 	review_event_button = make_button("再次查看事件卡", Vector2(195, 48))
 	review_event_button.add_theme_font_size_override("font_size", 18)
 	review_event_button.visible = false
-	review_event_button.pressed.connect(reopen_current_event_card)
+	review_event_button.pressed.connect(handle_event_secondary_action)
 	action_row.add_child(review_event_button)
 	end_turn_button = make_button("结束回合", Vector2(190, 48))
 	end_turn_button.add_theme_font_size_override("font_size", 18)
@@ -945,6 +965,13 @@ func reopen_current_event_card() -> void:
 	animate_event_card_open()
 
 
+func handle_event_secondary_action() -> void:
+	if deferred_event_pending:
+		resolve_modern_03_effect()
+	else:
+		reopen_current_event_card()
+
+
 func animate_event_card_open() -> void:
 	if event_card_tween and event_card_tween.is_valid():
 		event_card_tween.kill()
@@ -986,6 +1013,14 @@ func resolve_event_card(card: Dictionary, timeline_index: int) -> String:
 			event_choice_pending = true
 			show_system_test_choice()
 			return "等待选择是否触发系统测试响铃。"
+		"modern_03":
+			if not event_item_effects_enabled:
+				return "事件结算：物品效果被档案馆屏蔽，没有获得或丢弃物品。"
+			if is_ai_turn():
+				return resolve_modern_03_effect()
+			event_choice_pending = true
+			show_modern_03_timing_choice()
+			return "等待选择在地点效果前或后结算。"
 		"past_01":
 			var gained_item := "铃铛" if selected_location == "钟塔" else "石头"
 			gain_event_item(timeline_index, gained_item)
@@ -1002,6 +1037,11 @@ func resolve_event_card(card: Dictionary, timeline_index: int) -> String:
 			if event_item_effects_enabled:
 				return "事件结算：石头不足 2 个，过去时间线获得了「石头」×1。"
 			return "事件结算：物品效果无效，没有获得石头。"
+		"past_03":
+			gain_event_item(timeline_index, "石头")
+			travel_carry_blocked_once = true
+			show_effect_feedback("下一次穿越禁止携带物品", Color("#a879d8"), "穿越限制")
+			return "事件结算：过去时间线获得了「石头」×1；下一次实际穿越不能携带物品。"
 	return "事件效果已结算。"
 
 
@@ -1044,6 +1084,119 @@ func skip_system_test_bell() -> void:
 	instruction_label.text = "你选择不触发《系统测试》的响铃，事件结算继续。"
 
 
+func show_modern_03_timing_choice() -> void:
+	for child in item_choice_list.get_children():
+		child.queue_free()
+	var title := make_label("何时核对物资？", 31, Color("#a879d8"))
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	item_choice_list.add_child(title)
+	var detail := make_label("物品是否一致会在真正结算的瞬间判断。你可以先发动地点效果，再回来结算。", 19, Color("#d8e1ee"))
+	detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	item_choice_list.add_child(detail)
+	var now_button := make_button("现在结算", Vector2(340, 56))
+	now_button.pressed.connect(resolve_modern_03_now)
+	item_choice_list.add_child(now_button)
+	var later_button := make_button("延后 · 先处理地点效果", Vector2(360, 56))
+	later_button.pressed.connect(defer_modern_03_effect)
+	item_choice_list.add_child(later_button)
+	item_choice_overlay.visible = true
+
+
+func resolve_modern_03_now() -> void:
+	if not event_choice_pending:
+		return
+	event_choice_pending = false
+	item_choice_overlay.visible = false
+	current_event_result = resolve_modern_03_effect()
+
+
+func defer_modern_03_effect() -> void:
+	if not event_choice_pending:
+		return
+	event_choice_pending = false
+	deferred_event_pending = true
+	item_choice_overlay.visible = false
+	current_event_result = "事件效果已延后：必须在结束回合前完成结算。"
+	review_event_button.text = "结算事件效果"
+	instruction_label.text = "《误以为已经完成》已延后。你可以先使用地点技能，再结算事件效果。"
+
+
+func inventory_contents_match() -> bool:
+	var modern_counts: Dictionary = {}
+	var past_counts: Dictionary = {}
+	for item in inventories[0]:
+		modern_counts[item] = modern_counts.get(item, 0) + 1
+	for item in inventories[1]:
+		past_counts[item] = past_counts.get(item, 0) + 1
+	return modern_counts == past_counts
+
+
+func resolve_modern_03_effect() -> String:
+	deferred_event_pending = false
+	review_event_button.text = "再次查看事件卡"
+	if inventory_contents_match():
+		gain_event_item(0, "文件")
+		var result := "事件结算：两条时间线的物品完全一致，现代时间线获得了「文件」×1。"
+		current_event_result = result
+		instruction_label.text = result
+		end_turn_button.disabled = settlement_in_progress
+		return result
+	if inventories[0].is_empty():
+		var empty_result := "事件结算：两条时间线物品不同，但现代时间线没有物品可以丢弃。"
+		current_event_result = empty_result
+		instruction_label.text = empty_result
+		end_turn_button.disabled = settlement_in_progress
+		return empty_result
+	if is_ai_turn():
+		var ai_item := choose_ai_discard_item(0)
+		lose_event_item(0, ai_item)
+		var ai_result := "事件结算：物品清单不同，AI 丢弃了「%s」×1。" % ai_item
+		current_event_result = ai_result
+		return ai_result
+	mandatory_action_pending = true
+	mandatory_action_source = "modern_03"
+	review_event_button.disabled = true
+	end_turn_button.disabled = true
+	show_modern_03_discard_choices()
+	var pending_result := "事件结算：两条时间线物品不同，现代组必须丢弃一件物品。"
+	current_event_result = pending_result
+	return pending_result
+
+
+func show_modern_03_discard_choices() -> void:
+	for child in item_choice_list.get_children():
+		child.queue_free()
+	var title := make_label("物资清单不一致", 31, Color("#ef6f6c"))
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	item_choice_list.add_child(title)
+	var detail := make_label("现代组必须选择并丢弃一件物品，不能跳过。", 19, Color("#d8e1ee"))
+	detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	item_choice_list.add_child(detail)
+	var unique_items: Array = []
+	for item in inventories[0]:
+		if not unique_items.has(item):
+			unique_items.append(item)
+	for item in unique_items:
+		var item_button := make_button("丢弃 %s ×1" % item, Vector2(350, 54))
+		item_button.pressed.connect(discard_item_for_modern_03.bind(item))
+		item_choice_list.add_child(item_button)
+	item_choice_overlay.visible = true
+
+
+func discard_item_for_modern_03(item: String) -> void:
+	if not mandatory_action_pending or not inventories[0].has(item):
+		return
+	lose_event_item(0, item)
+	mandatory_action_pending = false
+	mandatory_action_source = ""
+	item_choice_overlay.visible = false
+	review_event_button.disabled = false
+	current_event_result = "事件结算：物品清单不同，现代时间线丢弃了「%s」×1。" % item
+	instruction_label.text = current_event_result
+	end_turn_button.disabled = settlement_in_progress
+
+
 func complete_event_review() -> void:
 	event_overlay.visible = false
 	if event_effect_resolved:
@@ -1073,7 +1226,7 @@ func complete_event_review() -> void:
 	settlement_in_progress = false
 	review_event_button.disabled = false
 	draw_button.text = "事件卡已处理"
-	if not mandatory_action_pending and not item_choice_overlay.visible:
+	if not mandatory_action_pending and not deferred_event_pending and not item_choice_overlay.visible:
 		end_turn_button.disabled = false
 		instruction_label.text = "本轮结算完成。你可以再次查看事件卡、使用地点技能，或结束回合。"
 	refresh_turn_actions()
@@ -1155,7 +1308,8 @@ func refresh_turn_actions() -> void:
 		elif eligible_people.is_empty():
 			location_action_button.text = "本轮无人可以穿越"
 		else:
-			location_action_button.text = "穿越到%s" % ("过去" if active_character == 0 else "现在")
+			var carry_warning := " · 禁止携带" if travel_carry_blocked_once else ""
+			location_action_button.text = "穿越到%s%s" % ["过去" if active_character == 0 else "现在", carry_warning]
 
 
 func activate_location_skill() -> void:
@@ -1279,6 +1433,7 @@ func activate_museum_skill() -> void:
 				instruction_label.text = "博物馆效果：AI 获得文件后失去了「%s」×1。" % item_to_lose
 			else:
 				mandatory_action_pending = true
+				mandatory_action_source = "museum"
 				end_turn_button.disabled = true
 				instruction_label.text = "博物馆效果：获得了「文件」×1。现在必须选择失去一件物品。"
 				show_museum_discard_choices()
@@ -1325,6 +1480,7 @@ func discard_item_for_museum(item: String) -> void:
 		return
 	lose_item(0, item)
 	mandatory_action_pending = false
+	mandatory_action_source = ""
 	item_choice_overlay.visible = false
 	end_turn_button.disabled = settlement_in_progress
 	instruction_label.text = "博物馆效果结算完成：现代人失去了「%s」×1。" % item
@@ -1464,25 +1620,30 @@ func show_workshop_item_choice(person_index: int) -> void:
 	var title := make_label("携带一件物品？", 32, CHARACTER_COLORS[0])
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	item_choice_list.add_child(title)
-	var warning := make_label("携带物品会让现代时间立即额外前进一格。", 18, Color("#f4b860"))
+	var warning_text := "《误差》生效：本次穿越禁止携带任何物品。" if travel_carry_blocked_once else "携带物品会让现代时间立即额外前进一格。"
+	var warning := make_label(warning_text, 18, Color("#ef6f6c") if travel_carry_blocked_once else Color("#f4b860"))
 	warning.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	item_choice_list.add_child(warning)
 	var no_item_button := make_button("不携带物品", Vector2(340, 54))
 	no_item_button.pressed.connect(complete_workshop_travel.bind(person_index, ""))
 	item_choice_list.add_child(no_item_button)
-	var unique_items: Array = []
-	for item in inventories[0]:
-		if not unique_items.has(item):
-			unique_items.append(item)
-	for item in unique_items:
-		var item_button := make_button("携带 %s ×1" % item, Vector2(340, 54))
-		item_button.pressed.connect(complete_workshop_travel.bind(person_index, item))
-		item_choice_list.add_child(item_button)
+	if not travel_carry_blocked_once:
+		var unique_items: Array = []
+		for item in inventories[0]:
+			if not unique_items.has(item):
+				unique_items.append(item)
+		for item in unique_items:
+			var item_button := make_button("携带 %s ×1" % item, Vector2(340, 54))
+			item_button.pressed.connect(complete_workshop_travel.bind(person_index, item))
+			item_choice_list.add_child(item_button)
 	item_choice_overlay.visible = true
 
 
 func complete_workshop_travel(person_index: int, carried_item: String) -> void:
 	if location_skill_used_this_turn or person_timelines[person_index] != active_character or travel_cooldowns[person_index] > 0:
+		return
+	if travel_carry_blocked_once and not carried_item.is_empty():
+		show_effect_feedback("本次穿越禁止携带物品", Color("#ef6f6c"), "穿越限制")
 		return
 	show_effect_feedback("%s发动工坊穿越" % ("现代组" if active_character == 0 else "过去组"), Color("#d39b4a"), "地点效果")
 	var source_timeline := active_character
@@ -1496,6 +1657,9 @@ func complete_workshop_travel(person_index: int, carried_item: String) -> void:
 	elif source_timeline == 1:
 		travel_cooldowns[person_index] = 1
 	person_timelines[person_index] = target_timeline
+	if travel_carry_blocked_once:
+		travel_carry_blocked_once = false
+		show_effect_feedback("禁带效果已消耗，下次穿越恢复正常", Color("#a879d8"), "穿越限制")
 	location_skill_used_this_turn = true
 	item_choice_overlay.visible = false
 	refresh_people_labels()
@@ -1608,7 +1772,17 @@ func finish_turn() -> void:
 		end_turn_button.disabled = true
 		instruction_label.text = "还有必须完成的行动：请先选择并失去一件物品。"
 		show_effect_feedback("必须先完成物品丢弃，不能结束回合", Color("#ef6f6c"), "强制行动")
-		show_museum_discard_choices()
+		if mandatory_action_source == "modern_03":
+			show_modern_03_discard_choices()
+		else:
+			show_museum_discard_choices()
+		return
+	if deferred_event_pending:
+		end_turn_button.disabled = true
+		review_event_button.visible = true
+		review_event_button.text = "结算事件效果"
+		instruction_label.text = "《误以为已经完成》尚未结算，不能结束回合。"
+		show_effect_feedback("必须先结算延后的事件效果", Color("#ef6f6c"), "强制行动")
 		return
 	if settlement_in_progress or event_choice_pending:
 		end_turn_button.disabled = true
@@ -1636,6 +1810,8 @@ func finish_turn() -> void:
 	settlement_in_progress = false
 	event_choice_pending = false
 	mandatory_action_pending = false
+	mandatory_action_source = ""
+	deferred_event_pending = false
 	if time_indices[0] >= TIMES.size() and time_indices[1] >= TIMES.size():
 		show_timeline_complete()
 		return
